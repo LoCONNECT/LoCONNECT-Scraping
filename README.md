@@ -1,2 +1,0 @@
-# LoCONNECT-Scraping
-LoCONNECT-Scraping
