@@ -12,7 +12,8 @@ dependencies = [
     "uvicorn (>=0.34.3,<0.35.0)",
     "python-dotenv (>=1.1.0,<2.0.0)",
     "requests (>=2.32.4,<3.0.0)",
-    "beautifulsoup4 (>=4.13.4,<5.0.0)"
+    "beautifulsoup4 (>=4.13.4,<5.0.0)",
+    "selenium (>=4.33.0,<5.0.0)"
 ]
 
 
