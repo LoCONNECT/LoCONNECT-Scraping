@@ -1,48 +1,96 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+import urllib.parse
+import requests
 
 app = FastAPI()
 
-#Main, Nest.Js에서 Main.ts
+BASE_URL = "https://www.diningcode.com"
 
-#venv가 아닌 poetry를 사용한 이유
-#의존성 충돌을 방지하고 협업시 패키지 충돌을 방지하기 위해서 사용
+#  1. 검색어로 식당 목록 수집
+def get_restaurants(keyword: str):
+    search_url = f"{BASE_URL}/list.dc?query={urllib.parse.quote(keyword)}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(search_url, headers=headers)
+    res.raise_for_status()
+    soup = BeautifulSoup(res.text, "html.parser")
 
-@app.get("/")
-def read_root():
-    return {"hi"}
+    restaurants = []
+    for a_tag in soup.select("a.PoiBlock"):
+        href = a_tag.get("href", "")
+        if "/profile.php?rid=" not in href:
+            continue
 
-# BeautifulSoup 사용 예시 코드
-# youtube,naver는 query에 keword를 담아서 검색
+        rid = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("rid", [None])[0]
+        name_tag = a_tag.select_one("h2")
+        name = name_tag.get_text(strip=True) if name_tag else "이름 없음"
+        restaurants.append({"name": name, "rid": rid})
 
-# from fastapi import FastAPI
-# from bs4 import BeautifulSoup
-# import requests
+    return restaurants
 
-# app = FastAPI()
 
-# @app.get("/naver-news")
-# def get_naver_news(query: str = "우주"):
-#     url = f"https://search.naver.com/search.naver?where=news&query={query}"
-#     headers = {
-#         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-#         "Referer": "https://www.naver.com",
-#         "Accept-Language": "ko-KR,ko;q=0.9"
-#     }
-#     res = requests.get(url, headers=headers)
-#     soup = BeautifulSoup(res.text, "html.parser")
+# 2. Selenium으로 메뉴 정보 수집
+def get_menu_from_profile(rid: str):
+    url = f"{BASE_URL}/profile.php?rid={rid}"
 
-#     titles = []
-#     for a in soup.find_all("a"):
-#         span = a.find("span")
-#         if span and query in span.text:
-#             titles.append(span.text.strip())
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
-#     if not titles:
-#         return {"message": "뉴스 제목을 찾지 못했습니다.", "results": []}
+    driver = webdriver.Chrome(options=options)
 
-#     # 파일 저장
-#     with open("news_titles.txt", "w", encoding="utf-8") as f:
-#         for title in titles:
-#             f.write(f"{title}\n")
+    try:
+        driver.get(url)
 
-#     return {"titles": titles, "message": "뉴스 제목 저장 완료"}
+       
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "ul.Restaurant_MenuList"))
+        )
+
+        name = driver.find_element(By.CSS_SELECTOR, "h2").text.strip()
+        menu_items = driver.find_elements(By.CSS_SELECTOR, "ul.Restaurant_MenuList li")
+        menus = []
+
+        for item in menu_items:
+            try:
+                menu_name = item.find_element(By.CSS_SELECTOR, "span.Restaurant_Menu").text.strip()
+            except:
+                menu_name = ""
+            try:
+                menu_price = item.find_element(By.CSS_SELECTOR, "p.Restaurant_MenuPrice").text.strip()
+            except:
+                menu_price = ""
+            if menu_name or menu_price:
+                menus.append(f"{menu_name} {menu_price}".strip())
+
+        return name, "\n".join(menus) if menus else "메뉴 정보 없음"
+
+    except Exception as e:
+        return "에러", f"메뉴 크롤링 실패: {str(e)}"
+
+    finally:
+        driver.quit()
+
+
+#  3. FastAPI 엔드포인트
+@app.get("/scrape")
+def scrape_menus(keyword: str = Query(..., description="검색할 지역명 또는 키워드")):
+    restaurants = get_restaurants(keyword)
+    result_lines = []
+
+    for r in restaurants:
+        if not r["rid"]:
+            continue
+        name, menus = get_menu_from_profile(r["rid"])
+        result_lines.append(f"[{name}]\n{menus}\n")
+
+    with open("menus.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(result_lines))
+
+    return {"msg": f"{len(result_lines)}개 식당의 메뉴 정보를 menus.txt에 저장했습니다."}
