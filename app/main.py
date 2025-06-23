@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -8,9 +9,10 @@ from bs4 import BeautifulSoup
 import urllib.parse
 import requests
 
-#초기 클론 pip install poetry
-# poetry install === npm i
-#서버 키는 명령어 poetry run uvicorn app.main:app --reload 
+# 초기 클론 pip install poetry
+# poetry install === npm i (팀원 각자 가상환경 만들어야 함)
+# 서버 키는 명령어 poetry run uvicorn app.main:app --reload (= FastAPI 실행)
+
 app = FastAPI()
 
 BASE_URL = "https://www.diningcode.com"
@@ -117,20 +119,30 @@ BASE_URL = "https://www.diningcode.com"
 
 #     return {"msg": f"{len(result_lines)}개 식당의 메뉴 정보를 menus.txt에 저장했습니다."}
 
+
+# 키워드 검색 함수
 def get_restaurants_by_selenium(keyword: str):
     print("get_restaurants진입")
     url = f"https://www.diningcode.com/list.dc?query={keyword}"
+    
     options = Options()
-    options.add_argument("--headless")
-    driver = webdriver.Chrome(options=options)
-    driver.get(url)
+    options.add_argument("--headless=new") # 최신 셀레니움 기준
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("window-size=1920x1080")
+    options.add_argument("user-agent=Mozilla/5.0")
 
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "a.PoiBlock"))
+    driver = webdriver.Chrome(options=options)
+    driver.get(url) # 해당 url 접속
+
+    WebDriverWait(driver, 10).until( # 비동기 로딩 안정 코드 (최대 10초 대기)
+        EC.presence_of_element_located((By.CSS_SELECTOR, "a.PoiBlock")) 
     )
-    restaurant_elems = driver.find_elements(By.CSS_SELECTOR, "a.PoiBlock")
+
+    restaurant_elems = driver.find_elements(By.CSS_SELECTOR, "a.PoiBlock") # 모든 식당 블록 리스트 형식으로 가져옴
+    
     result = []
-    for elem in restaurant_elems:
+    for elem in restaurant_elems: # 각 식당에서 이름, 링크 추출
         try:
             name = elem.find_element(By.CSS_SELECTOR, "h2").text
             href = elem.get_attribute("href")
@@ -138,9 +150,20 @@ def get_restaurants_by_selenium(keyword: str):
             result.append({"name": name, "href": href})
         except Exception as e:
             print(f"[WARN] 식당 정보 추출 실패: {e}")
-    driver.quit()
+
+    driver.quit() # 크롬 종료
+
     print(f"[INFO] 총 {len(result)}개 식당 탐색됨")
     return result
 
 # 테스트
-get_restaurants_by_selenium("강남역")
+# get_restaurants_by_selenium("강남역")
+
+# yz 테스트 (무한스크롤 + 텍스트파일 추후 확인)
+@app.get("/restaurants")
+def get_restaurants(keyword: str = Query(..., description="검색할 키워드")):
+    try:
+        return get_restaurants_by_selenium(keyword)
+    except Exception as e:
+        print(f"[ERROR] 크롤링 중 오류: {e}")
+        return JSONResponse(status_code=500, content={"message": "크롤링 실패", "detail": str(e)})
