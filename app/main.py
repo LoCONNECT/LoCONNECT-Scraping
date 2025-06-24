@@ -127,9 +127,11 @@ def get_restaurants_via_api(keyword: str):
     page = 1
     size = 20
     result = []
-    MAX_PAGE = 200  # 🔒 여기에 최대 페이지 제한 추가!
+    seen_rids = set()
+    repeated_pages = 0
+    MAX_REPEAT = 3  # 같은 페이지가 3번 반복되면 종료
 
-    while page <= MAX_PAGE:
+    while True:
         url = "https://im.diningcode.com/API/isearch/"
         headers = {
             "User-Agent": "Mozilla/5.0",
@@ -159,18 +161,31 @@ def get_restaurants_via_api(keyword: str):
             print("[INFO] 더 이상 데이터 없음, 수집 종료")
             break
 
+        page_rids = [item.get("v_rid") for item in items]
+        if all(rid in seen_rids for rid in page_rids):
+            repeated_pages += 1
+            print(f"[WARN] 페이지 {page}는 완전히 중복됨 (중복 횟수: {repeated_pages})")
+            if repeated_pages >= MAX_REPEAT:
+                print("[INFO] 반복 페이지 감지 → 종료")
+                break
+        else:
+            repeated_pages = 0  # 중복 아니면 리셋
+
         for item in items:
-            result.append({
-                "name": item.get("nm"),
-                "addr": item.get("addr"),
-                "cate": item.get("cate"),
-                "score": item.get("score"),
-                "v_rid": item.get("v_rid"),
-            })
+            rid = item.get("v_rid")
+            if rid not in seen_rids:
+                seen_rids.add(rid)
+                result.append({
+                    "name": item.get("nm"),
+                    "addr": item.get("addr"),
+                    "cate": item.get("cate"),
+                    "score": item.get("score"),
+                    "v_rid": rid,
+                })
 
         page += 1
 
-    print(f"[INFO] 총 {len(result)}개 식당 수집 완료 (최대 {MAX_PAGE} 페이지)")
+    print(f"[INFO] 총 {len(result)}개 식당 수집 완료")
     return result
 
 
