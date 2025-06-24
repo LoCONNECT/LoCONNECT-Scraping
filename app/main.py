@@ -122,73 +122,62 @@ BASE_URL = "https://www.diningcode.com"
 
 
 # 키워드 검색 함수
-def get_restaurants_by_selenium(keyword: str):
-    print("get_restaurants진입")
-    url = f"https://www.diningcode.com/list.dc?query={keyword}"
-    
-    options = Options()
-    options.add_argument("--headless=new") # 최신 셀레니움 기준
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("window-size=1920x1080")
-    options.add_argument("user-agent=Mozilla/5.0")
+def get_restaurants_via_api(keyword: str):
+    print("[INFO] API 방식으로 식당 목록 수집 시작")
+    page = 1
+    size = 20
+    result = []
+    MAX_PAGE = 200  # 🔒 여기에 최대 페이지 제한 추가!
 
-    driver = webdriver.Chrome(options=options)
-    driver.get(url) # 해당 url 접속
+    while page <= MAX_PAGE:
+        url = "https://im.diningcode.com/API/isearch/"
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://www.diningcode.com",
+            "Referer": "https://www.diningcode.com/"
+        }
+        data = {
+            "query": keyword,
+            "page": str(page),
+            "size": str(size),
+            "order": "r_score",
+            "rn_search_flag": "on",
+            "search_type": "poi_search",
+        }
 
-    # 무한 스크롤
-    SCROLL_PAUSE_TIME = 2.0
-    prev_count = 0
-    same_count = 0
-
-    while True:
-        elems = driver.find_elements(By.CSS_SELECTOR, "a.PoiBlock")
-        curr_count = len(elems)
-        print(f"[INFO] 현재 로딩된 식당 수: {curr_count}")
-
-        if curr_count == prev_count:
-            same_count += 1
-            if same_count >= 3:
-                print("[INFO] 더 이상 식당이 추가되지 않아 종료")
-                break
-        else:
-            same_count = 0
-            prev_count = curr_count
-
-        try:
-            # 마지막 요소에 닿았다고 속이기
-            last_elem = elems[-1]
-            driver.execute_script("arguments[0].scrollIntoView(true);", last_elem)
-        except Exception as e:
-            print(f"[WARN] 마지막 요소 접근 실패: {e}")
+        res = requests.post(url, headers=headers, data=data)
+        if res.status_code != 200:
+            print(f"[ERROR] 요청 실패: {res.status_code}")
             break
 
-        time.sleep(SCROLL_PAUSE_TIME)
+        json_data = res.json()
+        items = json_data.get("result_data", {}).get("poi_section", {}).get("list", [])
+        print(f"[INFO] {page}페이지: {len(items)}개 수집")
 
-    WebDriverWait(driver, 10).until( # 비동기 로딩 안정 코드 (최대 10초 대기)
-        EC.presence_of_element_located((By.CSS_SELECTOR, "a.PoiBlock")) 
-    )
+        if not items:
+            print("[INFO] 더 이상 데이터 없음, 수집 종료")
+            break
 
-    restaurant_elems = driver.find_elements(By.CSS_SELECTOR, "a.PoiBlock") # 모든 식당 블록 리스트 형식으로 가져옴
-    result = []
-    for elem in restaurant_elems: # 각 식당에서 이름, 링크 추출
-        try:
-            name = elem.find_element(By.CSS_SELECTOR, "h2").text
-            href = elem.get_attribute("href")
-            print(f"[INFO] 식당: {name}, 링크: {href}")
-            result.append({"name": name, "href": href})
-        except Exception as e:
-            print(f"[WARN] 식당 정보 추출 실패: {e}")
+        for item in items:
+            result.append({
+                "name": item.get("nm"),
+                "addr": item.get("addr"),
+                "cate": item.get("cate"),
+                "score": item.get("score"),
+                "v_rid": item.get("v_rid"),
+            })
 
-    driver.quit() # 크롬 종료
-    print(f"[INFO] 총 {len(result)}개 식당 탐색됨")
+        page += 1
+
+    print(f"[INFO] 총 {len(result)}개 식당 수집 완료 (최대 {MAX_PAGE} 페이지)")
     return result
 
-# yz 테스트 (무한스크롤 + 텍스트파일 추후 확인)
+
 @app.get("/restaurants")
 def get_restaurants(keyword: str = Query(..., description="검색할 키워드")):
     try:
-        return get_restaurants_by_selenium(keyword)
+        return get_restaurants_via_api(keyword)
     except Exception as e:
         print(f"[ERROR] 크롤링 중 오류: {e}")
         return JSONResponse(status_code=500, content={"message": "크롤링 실패", "detail": str(e)})
