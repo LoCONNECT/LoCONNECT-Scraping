@@ -1,3 +1,4 @@
+import time
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 from selenium import webdriver
@@ -135,12 +136,40 @@ def get_restaurants_by_selenium(keyword: str):
     driver = webdriver.Chrome(options=options)
     driver.get(url) # 해당 url 접속
 
+    # 무한 스크롤
+    SCROLL_PAUSE_TIME = 2.0
+    prev_count = 0
+    same_count = 0
+
+    while True:
+        elems = driver.find_elements(By.CSS_SELECTOR, "a.PoiBlock")
+        curr_count = len(elems)
+        print(f"[INFO] 현재 로딩된 식당 수: {curr_count}")
+
+        if curr_count == prev_count:
+            same_count += 1
+            if same_count >= 3:
+                print("[INFO] 더 이상 식당이 추가되지 않아 종료")
+                break
+        else:
+            same_count = 0
+            prev_count = curr_count
+
+        try:
+            # 마지막 요소에 닿았다고 속이기
+            last_elem = elems[-1]
+            driver.execute_script("arguments[0].scrollIntoView(true);", last_elem)
+        except Exception as e:
+            print(f"[WARN] 마지막 요소 접근 실패: {e}")
+            break
+
+        time.sleep(SCROLL_PAUSE_TIME)
+
     WebDriverWait(driver, 10).until( # 비동기 로딩 안정 코드 (최대 10초 대기)
         EC.presence_of_element_located((By.CSS_SELECTOR, "a.PoiBlock")) 
     )
 
     restaurant_elems = driver.find_elements(By.CSS_SELECTOR, "a.PoiBlock") # 모든 식당 블록 리스트 형식으로 가져옴
-    
     result = []
     for elem in restaurant_elems: # 각 식당에서 이름, 링크 추출
         try:
@@ -152,12 +181,8 @@ def get_restaurants_by_selenium(keyword: str):
             print(f"[WARN] 식당 정보 추출 실패: {e}")
 
     driver.quit() # 크롬 종료
-
     print(f"[INFO] 총 {len(result)}개 식당 탐색됨")
     return result
-
-# 테스트
-# get_restaurants_by_selenium("강남역")
 
 # yz 테스트 (무한스크롤 + 텍스트파일 추후 확인)
 @app.get("/restaurants")
