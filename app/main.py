@@ -45,7 +45,7 @@ def get_menu_items_by_dom(rid: str) -> List[Dict]:
     url = f"{BASE_URL}/profile.php?rid={rid}"
     log = logging.getLogger("menu")
     log.info(f"크롤링 시작: {url}")
-
+    print("내부 정보{url},{log}")
     driver = create_driver(headless=True)
     menus: List[Dict] = []
 
@@ -156,7 +156,7 @@ def get_restaurants(keyword: str) -> List[Dict]:
             )
         page += 1
 
-    logging.info(f"식당 {len(result)}곳 수집 완료")
+    logging.info(f"식당 {len(result)}곳 수집 완료",result)
     return result
 
 
@@ -191,6 +191,7 @@ def list_restaurants_with_menus(keyword: str = Query(...)):
 
         for r in rows:
             try:
+                print(r,"메뉴")
                 r["menus"] = get_menu_items_by_dom(r["v_rid"])
             except Exception as e:
                 logging.warning(f"메뉴 크롤링 실패(rid={r['v_rid']}): {e}")
