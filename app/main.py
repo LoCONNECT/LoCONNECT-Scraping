@@ -1,214 +1,210 @@
-import os
+import os, time, logging, requests
+from typing import List, Dict
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
+from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from bs4 import BeautifulSoup
-import urllib.parse
-import requests
+from webdriver_manager.chrome import ChromeDriverManager
 
+# pthon 3.13버전 설치
 # 초기 클론 pip install poetry
-# poetry install === npm i (팀원 각자 가상환경 만들어야 함)
+# (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+# poetry install  === npm i (팀원 각자 가상환경 만들어야 함)
 # 서버 키는 명령어 poetry run uvicorn app.main:app --reload (= FastAPI 실행)
 
 app = FastAPI()
-
 BASE_URL = "https://www.diningcode.com"
 
-# def get_restaurants(keyword: str):
-#     search_url = f"{BASE_URL}/list.dc?query={urllib.parse.quote(keyword)}"
-#     headers = {
-#         "User-Agent": (
-#             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-#             "AppleWebKit/537.36 (KHTML, like Gecko) "
-#             "Chrome/124.0.0.0 Safari/537.36"
-#         )
-#     }
-#     print(f"검색 URL: {search_url}")
-#     res = requests.get(search_url, headers=headers)
-#     print(f"HTTP Status: {res.status_code}")
-#     res.raise_for_status()
-#     print("HTML 내용 일부:", res.text[:500])  # 처음 500자만 미리보기
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
 
-#     with open("debug.html", "w", encoding="utf-8") as f:
-#         f.write(res.text)
-#     print("debug.html 저장 완료")
+# ───────────────────────────────────────────────
+# 공통 ChromeDriver 생성기 ― 필요한 곳에서 호출해 사용 후 quit()
+def create_driver(headless: bool = True) -> webdriver.Chrome:
+    chrome_opts = Options()
+    if headless:
+        chrome_opts.add_argument("--headless=new")     # ↔ "--headless=old" 테스트 가능
+    chrome_opts.add_argument("--no-sandbox")
+    chrome_opts.add_argument("--disable-dev-shm-usage")
+    chrome_opts.add_argument("--disable-gpu")
+    return webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=chrome_opts,
+    )
 
-#     soup = BeautifulSoup(res.text, "html.parser")
-#     restaurants = []
-#     for idx, a_tag in enumerate(soup.select("a.PoiBlock")):
-#         href = a_tag.get("href", "")
-#         print(f"{idx}번째 a.PoiBlock href: {href}")
-#         if "/profile.php?rid=" not in href:
-#             continue
-#         rid = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("rid", [None])[0]
-#         name_tag = a_tag.select_one("h2")
-#         name = name_tag.get_text(strip=True) if name_tag else "이름 없음"
-#         print(f"식당 발견: name={name}, rid={rid}")
-#         restaurants.append({"name": name, "rid": rid})
+# ───────────────────────────────────────────────
+# 식당 한 곳 메뉴를 DOM으로 끝까지 펼쳐 추출
+def get_menu_items_by_dom(rid: str) -> List[Dict]:
+    url = f"{BASE_URL}/profile.php?rid={rid}"
+    log = logging.getLogger("menu")
+    log.info(f"크롤링 시작: {url}")
 
-#     print(f"총 {len(restaurants)}개 식당 탐색됨")
-#     return restaurants
+    driver = create_driver(headless=True)
+    menus: List[Dict] = []
 
-# def get_menu_from_profile(rid: str):
-#     url = f"{BASE_URL}/profile.php?rid={rid}"
-#     print(f"[메뉴 크롤링 시도: {url}")
+    try:
+        driver.get(url)
+        click_count = 0
+        MAX_CLICK = 5
+        while click_count < MAX_CLICK:
+            try:
+                more_btn = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "a.Restaurant_MenuMore"))
+                )
+                driver.execute_script("arguments[0].click();", more_btn)
+                time.sleep(6)
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            except Exception:
+                break  # 더보기 없거나 클릭 불가
 
-#     options = Options()
-#     options.add_argument("--headless")
-#     options.add_argument("--no-sandbox")
-#     options.add_argument("--disable-dev-shm-usage")
-#     driver = webdriver.Chrome(options=options)
+        #  메뉴 리스트 등장 대기
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "ul.Restaurant_MenuList"))
+        )
 
-#     try:
-#         driver.get(url)
-#         print("Selenium 페이지 로드 완료")
-#         WebDriverWait(driver, 10).until(
-#             EC.presence_of_element_located((By.CSS_SELECTOR, "ul.Restaurant_MenuList"))
-#         )
+        #  BeautifulSoup 파싱
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        for li in soup.select("ul.Restaurant_MenuList > li"):
+            name_tag = li.select_one("span.Restaurant_Menu")
+            price_tag = li.select_one("p.Restaurant_MenuPrice")
+            name = name_tag.get_text(strip=True) if name_tag else None
+            if not name:
+                continue
+            price = price_tag.get_text(strip=True) if price_tag else None
+            menus.append({"name": name, "price": price})
 
-#         name = driver.find_element(By.CSS_SELECTOR, "h2").text.strip()
-#         menu_items = driver.find_elements(By.CSS_SELECTOR, "ul.Restaurant_MenuList li")
-#         menus = []
+        log.info(f"메뉴 {len(menus)}개 추출 완료 (rid={rid})")
+    except Exception as e:
+        log.error(f"메뉴 크롤링 실패(rid={rid}): {e}")
+    finally:
+        driver.quit()
 
-#         for idx, item in enumerate(menu_items):
-#             try:
-#                 menu_name = item.find_element(By.CSS_SELECTOR, "span.Restaurant_Menu").text.strip()
-#             except Exception as e:
-#                 menu_name = ""
-#                 print(f"{idx}번째 메뉴명 추출 실패: {e}")
-#             try:
-#                 menu_price = item.find_element(By.CSS_SELECTOR, "p.Restaurant_MenuPrice").text.strip()
-#             except Exception as e:
-#                 menu_price = ""
-#                 print(f"{idx}번째 메뉴가격 추출 실패: {e}")
-#             if menu_name or menu_price:
-#                 menus.append(f"{menu_name} {menu_price}".strip())
+    return menus
 
-#         print(f"메뉴 개수: {len(menus)}")
-#         return name, "\n".join(menus) if menus else "메뉴 정보 없음"
-
-#     except Exception as e:
-#         print(f"메뉴 크롤링 실패: {e}")
-#         return "에러", f"메뉴 크롤링 실패: {str(e)}"
-
-#     finally:
-#         driver.quit()
-#         print(" Selenium 드라이버 종료")
-
-# @app.get("/scrape")
-# def scrape_menus(keyword: str = Query(..., description="검색할 지역명 또는 키워드")):
-#     print(f"/scrape 진입, keyword={keyword}")
-#     restaurants = get_restaurants(keyword)
-#     result_lines = []
-
-#     for r in restaurants:
-#         if not r["rid"]:
-#             print(f"rid 없음, 건너뜀: {r}")
-#             continue
-#         print(f"메뉴 크롤링 시작: {r['name']} ({r['rid']})")
-#         name, menus = get_menu_from_profile(r["rid"])
-#         print(f"메뉴 크롤링 완료: {name}")
-#         result_lines.append(f"[{name}]\n{menus}\n")
-
-#     with open("menus.txt", "w", encoding="utf-8") as f:
-#         f.write("\n".join(result_lines))
-#     print(f"menus.txt 저장 완료 ({len(result_lines)}개 식당)")
-
-#     return {"msg": f"{len(result_lines)}개 식당의 메뉴 정보를 menus.txt에 저장했습니다."}
-
-
-# 키워드 검색 함수
-def get_restaurants_via_api(keyword: str):
-    print("[INFO] API 방식으로 식당 목록 수집 시작")
-    page = 1
-    size = 20
-    result = []
-    seen_rids = set()
-    repeated_pages = 0
-    MAX_REPEAT = 3  # 같은 페이지가 3번 반복되면 종료
+# 키워드로 식당 목록 수집 (중복 페이지 감지 포함)
+def get_restaurants(keyword: str) -> List[Dict]:
+    logging.info("식당 목록 수집 시작")
+    page, size = 1, 20
+    seen_rids, result = set(), []
+    MAX_REPEAT, repeated = 3, 0              # ← 페이지 중복 감지용
 
     while True:
-        url = "https://im.diningcode.com/API/isearch/"
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://www.diningcode.com",
-            "Referer": "https://www.diningcode.com/"
-        }
-        data = {
-            "query": keyword,
-            "page": str(page),
-            "size": str(size),
-            "order": "r_score",
-            "rn_search_flag": "on",
-            "search_type": "poi_search",
-        }
-
-        res = requests.post(url, headers=headers, data=data)
-        if res.status_code != 200:
-            print(f"[ERROR] 요청 실패: {res.status_code}")
+        r = requests.post(
+            "https://im.diningcode.com/API/isearch/",
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": BASE_URL,
+                "Referer": BASE_URL + "/",
+            },
+            data={
+                "query": keyword,
+                "page": str(page),
+                "size": str(size),
+                "order": "r_score",
+                "rn_search_flag": "on",
+                "search_type": "poi_search",
+            },
+            timeout=10,
+        )
+        if r.status_code != 200:
+            logging.error(f"목록 API 오류: {r.status_code}")
             break
 
-        json_data = res.json()
-        items = json_data.get("result_data", {}).get("poi_section", {}).get("list", [])
-        print(f"[INFO] {page}페이지: {len(items)}개 수집")
-
+        items = (
+            r.json()
+            .get("result_data", {})
+            .get("poi_section", {})
+            .get("list", [])
+        )
         if not items:
-            print("[INFO] 더 이상 데이터 없음, 수집 종료")
             break
 
-        page_rids = [item.get("v_rid") for item in items]
-        if all(rid in seen_rids for rid in page_rids):
-            repeated_pages += 1
-            print(f"[WARN] 페이지 {page}는 완전히 중복됨 (중복 횟수: {repeated_pages})")
-            if repeated_pages >= MAX_REPEAT:
-                print("[INFO] 반복 페이지 감지 → 종료")
+        logging.info(f"{page}페이지: {len(items)}개")
+
+        # 페이지 전체가 중복인지 확인
+        page_rids = [it["v_rid"] for it in items]
+        if all(r in seen_rids for r in page_rids):
+            repeated += 1
+            if repeated >= MAX_REPEAT:
+                logging.info("반복 페이지 감지 → 종료")
                 break
         else:
-            repeated_pages = 0  # 중복 아니면 리셋
+            repeated = 0  # 새로운 RID가 있으면 카운트 리셋
 
-        for item in items:
-            rid = item.get("v_rid")
-            if rid not in seen_rids:
-                seen_rids.add(rid)
-                result.append({
-                    "name": item.get("nm"),
-                    "addr": item.get("addr"),
-                    "cate": item.get("cate"), # 카테고리 다 null인거 같은데 필요한가?
-                    "score": item.get("score"),
+        # 결과 누적
+        for it in items:
+            rid = it["v_rid"]
+            if rid in seen_rids:
+                continue
+            seen_rids.add(rid)
+            result.append(
+                {
+                    "name": it.get("nm"),
+                    "addr": it.get("addr"),
+                    "cate": it.get("cate"),
+                    "score": it.get("score"),
                     "v_rid": rid,
-                })
-
+                }
+            )
         page += 1
 
-    print(f"[INFO] 총 {len(result)}개 식당 수집 완료")
+    logging.info(f"식당 {len(result)}곳 수집 완료")
     return result
 
-# 키워드 검색 결과 파일 저장 (파일 자동생성 / 검색할 때마다 덮어쓰기 방식)
-def save_restaurants_file(restaurants: list, keyword: str, folder: str = "txt", filename: str = "searched_restaurants.txt"):
-    try:
-        os.makedirs(folder, exist_ok=True)  # txt 폴더 없으면 생성
-        file_path = os.path.join(folder, filename) # 파일 경로 구성
-        
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(f"--- 검색어: {keyword} ---\n")
-            for r in restaurants:
-                line = f"{r['name']} | {r['addr']} | {r['cate']} | {r['score']}\n"
-                f.write(line)
-        print(f"[INFO] {file_path} 파일에 저장 완료")
-    except Exception as e:
-        print(f"[ERROR] 파일 저장 중 오류 발생: {e}")
 
-@app.get("/restaurants")
-def get_restaurants(keyword: str = Query(..., description="검색할 키워드")):
+# 파일 저장 (옵션)
+def save_file(rows: List[Dict], keyword: str, fname: str):
+    os.makedirs("txt", exist_ok=True)
+    path = os.path.join("txt", fname)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"--- {keyword} ---\n")
+        for r in rows:
+            f.write(f"{r['name']} | {r['addr']} | {r.get('score')} | {r.get('menus')}\n")
+    logging.info(f"{path} 저장 완료")
+
+
+# FastAPI 엔드포인트
+@app.get("/restaurants")  # 목록만
+def list_restaurants(keyword: str = Query(..., description="검색어")):
     try:
-        restaurants = get_restaurants_via_api(keyword)
-        save_restaurants_file(restaurants, keyword)
-        return restaurants
+        rows = get_restaurants(keyword)
+        save_file(rows, keyword, "restaurants.txt")
+        return rows
     except Exception as e:
-        print(f"[ERROR] 크롤링 중 오류: {e}")
-        return JSONResponse(status_code=500, content={"message": "크롤링 실패", "detail": str(e)})
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/restaurants-with-menus")  # 목록 + 메뉴
+def list_restaurants_with_menus(keyword: str = Query(...)):
+    try:
+        rows = get_restaurants(keyword) 
+
+        fail_count = 0               # ← 실패 횟수 카운터
+        MAX_FAIL  = 5                # ← 연속 실패 허용 한도
+
+        for r in rows:
+            try:
+                r["menus"] = get_menu_items_by_dom(r["v_rid"])
+            except Exception as e:
+                logging.warning(f"메뉴 크롤링 실패(rid={r['v_rid']}): {e}")
+                r["menus"] = []
+                fail_count += 1
+
+                if fail_count >= MAX_FAIL:
+                    logging.warning("[WARN] 실패가 많아 전체 크롤링 중단")
+                    break            # → 더 이상 크롤링 진행하지 않고 루프 탈출
+            else:
+                fail_count = 0       # 성공하면 실패 카운터 리셋
+
+        save_file(rows, keyword, "restaurants_with_menu.txt")
+        return rows
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
