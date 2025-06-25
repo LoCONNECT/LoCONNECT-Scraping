@@ -1,4 +1,4 @@
-import time
+import os
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 from selenium import webdriver
@@ -178,7 +178,7 @@ def get_restaurants_via_api(keyword: str):
                 result.append({
                     "name": item.get("nm"),
                     "addr": item.get("addr"),
-                    "cate": item.get("cate"),
+                    "cate": item.get("cate"), # 카테고리 다 null인거 같은데 필요한가?
                     "score": item.get("score"),
                     "v_rid": rid,
                 })
@@ -188,11 +188,27 @@ def get_restaurants_via_api(keyword: str):
     print(f"[INFO] 총 {len(result)}개 식당 수집 완료")
     return result
 
+# 키워드 검색 결과 파일 저장 (파일 자동생성 / 검색할 때마다 덮어쓰기 방식)
+def save_restaurants_file(restaurants: list, keyword: str, folder: str = "txt", filename: str = "searched_restaurants.txt"):
+    try:
+        os.makedirs(folder, exist_ok=True)  # txt 폴더 없으면 생성
+        file_path = os.path.join(folder, filename) # 파일 경로 구성
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"--- 검색어: {keyword} ---\n")
+            for r in restaurants:
+                line = f"{r['name']} | {r['addr']} | {r['cate']} | {r['score']}\n"
+                f.write(line)
+        print(f"[INFO] {file_path} 파일에 저장 완료")
+    except Exception as e:
+        print(f"[ERROR] 파일 저장 중 오류 발생: {e}")
 
 @app.get("/restaurants")
 def get_restaurants(keyword: str = Query(..., description="검색할 키워드")):
     try:
-        return get_restaurants_via_api(keyword)
+        restaurants = get_restaurants_via_api(keyword)
+        save_restaurants_file(restaurants, keyword)
+        return restaurants
     except Exception as e:
         print(f"[ERROR] 크롤링 중 오류: {e}")
         return JSONResponse(status_code=500, content={"message": "크롤링 실패", "detail": str(e)})
