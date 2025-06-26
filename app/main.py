@@ -45,7 +45,7 @@ def get_menu_items_by_dom(rid: str) -> List[Dict]:
     url = f"{BASE_URL}/profile.php?rid={rid}"
     log = logging.getLogger("menu")
     log.info(f"크롤링 시작: {url}")
-    print("내부 정보{url},{log}")
+    
     driver = create_driver(headless=True)
     menus: List[Dict] = []
 
@@ -56,9 +56,10 @@ def get_menu_items_by_dom(rid: str) -> List[Dict]:
         while click_count < MAX_CLICK:
             try:
                 more_btn = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "a.Restaurant_MenuMore"))
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-hidden"))
                 )
                 driver.execute_script("arguments[0].click();", more_btn)
+                click_count += 1
                 time.sleep(6)
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             except Exception:
@@ -72,8 +73,8 @@ def get_menu_items_by_dom(rid: str) -> List[Dict]:
         #  BeautifulSoup 파싱
         soup = BeautifulSoup(driver.page_source, "html.parser")
         for li in soup.select("ul.Restaurant_MenuList > li"):
-            name_tag = li.select_one("span.Restaurant_Menu")
-            price_tag = li.select_one("p.Restaurant_MenuPrice")
+            name_tag = li.select_one("strong.Restaurant_Menu")
+            price_tag = li.select_one("span.Restaurant_MenuPrice")
             name = name_tag.get_text(strip=True) if name_tag else None
             if not name:
                 continue
@@ -156,7 +157,7 @@ def get_restaurants(keyword: str) -> List[Dict]:
             )
         page += 1
 
-    logging.info(f"식당 {len(result)}곳 수집 완료",result)
+    logging.info(f"식당 {len(result)}곳 수집 완료: {result}")
     return result
 
 
@@ -167,7 +168,7 @@ def save_file(rows: List[Dict], keyword: str, fname: str):
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"--- {keyword} ---\n")
         for r in rows:
-            f.write(f"{r['name']} | {r['addr']} | {r.get('score')} | {r.get('menus')}\n")
+            f.write(f"{r['name']} | {r['addr']} | {r.get('score')} | {r.get('menus')}\n") # 여기 메뉴 못가져오는데 menus 삭제할까?
     logging.info(f"{path} 저장 완료")
 
 
@@ -191,7 +192,7 @@ def list_restaurants_with_menus(keyword: str = Query(...)):
 
         for r in rows:
             try:
-                print(r,"메뉴")
+                logging.info(f"{r['name']} 메뉴 크롤링 시작")
                 r["menus"] = get_menu_items_by_dom(r["v_rid"])
             except Exception as e:
                 logging.warning(f"메뉴 크롤링 실패(rid={r['v_rid']}): {e}")
@@ -199,7 +200,7 @@ def list_restaurants_with_menus(keyword: str = Query(...)):
                 fail_count += 1
 
                 if fail_count >= MAX_FAIL:
-                    logging.warning("[WARN] 실패가 많아 전체 크롤링 중단")
+                    logging.warning("실패가 많아 전체 크롤링 중단")
                     break            # → 더 이상 크롤링 진행하지 않고 루프 탈출
             else:
                 fail_count = 0       # 성공하면 실패 카운터 리셋
