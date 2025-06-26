@@ -29,6 +29,7 @@ logging.basicConfig(
 # 공통 ChromeDriver 생성기 ― 필요한 곳에서 호출해 사용 후 quit()
 def create_driver(headless: bool = True) -> webdriver.Chrome:
     chrome_opts = Options()
+    chrome_opts.add_argument("window-size=1280x1024") # 뷰포트 사이즈 명시 (웹기준)
     if headless:
         chrome_opts.add_argument("--headless=new")     # ↔ "--headless=old" 테스트 가능
     chrome_opts.add_argument("--no-sandbox")
@@ -38,56 +39,6 @@ def create_driver(headless: bool = True) -> webdriver.Chrome:
         service=Service(ChromeDriverManager().install()),
         options=chrome_opts,
     )
-
-# ───────────────────────────────────────────────
-# 식당 한 곳 메뉴를 DOM으로 끝까지 펼쳐 추출
-def get_menu_items_by_dom(rid: str) -> List[Dict]:
-    url = f"{BASE_URL}/profile.php?rid={rid}"
-    log = logging.getLogger("menu")
-    log.info(f"크롤링 시작: {url}")
-    
-    driver = create_driver(headless=True)
-    menus: List[Dict] = []
-
-    try:
-        driver.get(url)
-        click_count = 0
-        MAX_CLICK = 5
-        while click_count < MAX_CLICK:
-            try:
-                more_btn = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-hidden"))
-                )
-                driver.execute_script("arguments[0].click();", more_btn)
-                click_count += 1
-                time.sleep(6)
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            except Exception:
-                break  # 더보기 없거나 클릭 불가
-
-        #  메뉴 리스트 등장 대기
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "ul.Restaurant_MenuList"))
-        )
-
-        #  BeautifulSoup 파싱
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        for li in soup.select("ul.Restaurant_MenuList > li"):
-            name_tag = li.select_one("strong.Restaurant_Menu")
-            price_tag = li.select_one("span.Restaurant_MenuPrice")
-            name = name_tag.get_text(strip=True) if name_tag else None
-            if not name:
-                continue
-            price = price_tag.get_text(strip=True) if price_tag else None
-            menus.append({"name": name, "price": price})
-
-        log.info(f"메뉴 {len(menus)}개 추출 완료 (rid={rid})")
-    except Exception as e:
-        log.error(f"메뉴 크롤링 실패(rid={rid}): {e}")
-    finally:
-        driver.quit()
-
-    return menus
 
 # 키워드로 식당 목록 수집 (중복 페이지 감지 포함)
 def get_restaurants(keyword: str) -> List[Dict]:
@@ -150,9 +101,9 @@ def get_restaurants(keyword: str) -> List[Dict]:
                 {
                     "name": it.get("nm"),
                     "addr": it.get("addr"),
-                    "cate": it.get("cate"),
+                    # "cate": it.get("cate"), 안쓰는것들도 삭제할까?
                     "score": it.get("score"),
-                    "v_rid": rid,
+                    # "v_rid": rid,
                 }
             )
         page += 1
@@ -168,7 +119,7 @@ def save_file(rows: List[Dict], keyword: str, fname: str):
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"--- {keyword} ---\n")
         for r in rows:
-            f.write(f"{r['name']} | {r['addr']} | {r.get('score')} | {r.get('menus')}\n") # 여기 메뉴 못가져오는데 menus 삭제할까?
+            f.write(f"{r['name']} | {r['addr']} | {r.get('score')} \n") 
     logging.info(f"{path} 저장 완료")
 
 
@@ -179,34 +130,5 @@ def list_restaurants(keyword: str = Query(..., description="검색어")):
         rows = get_restaurants(keyword)
         save_file(rows, keyword, "restaurants.txt")
         return rows
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-@app.get("/restaurants-with-menus")  # 목록 + 메뉴
-def list_restaurants_with_menus(keyword: str = Query(...)):
-    try:
-        rows = get_restaurants(keyword) 
-
-        fail_count = 0               # ← 실패 횟수 카운터
-        MAX_FAIL  = 5                # ← 연속 실패 허용 한도
-
-        for r in rows:
-            try:
-                logging.info(f"{r['name']} 메뉴 크롤링 시작")
-                r["menus"] = get_menu_items_by_dom(r["v_rid"])
-            except Exception as e:
-                logging.warning(f"메뉴 크롤링 실패(rid={r['v_rid']}): {e}")
-                r["menus"] = []
-                fail_count += 1
-
-                if fail_count >= MAX_FAIL:
-                    logging.warning("실패가 많아 전체 크롤링 중단")
-                    break            # → 더 이상 크롤링 진행하지 않고 루프 탈출
-            else:
-                fail_count = 0       # 성공하면 실패 카운터 리셋
-
-        save_file(rows, keyword, "restaurants_with_menu.txt")
-        return rows
-
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
