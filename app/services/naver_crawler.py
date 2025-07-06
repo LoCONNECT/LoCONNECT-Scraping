@@ -11,7 +11,9 @@ CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
 
 def search_naver_place_id(query: str) -> Optional[str]:
-    """네이버 지역 검색 API로 place_id 추출"""
+    """
+    네이버 지역 검색 API로 장소 링크 추출
+    """
     headers = {
         "X-Naver-Client-Id": CLIENT_ID,
         "X-Naver-Client-Secret": CLIENT_SECRET,
@@ -19,37 +21,59 @@ def search_naver_place_id(query: str) -> Optional[str]:
     params = {"query": query}
     url = "https://openapi.naver.com/v1/search/local.json"
 
-    r = requests.get(url, headers=headers, params=params, timeout=5)
-    if r.status_code != 200:
-        print(f"[ERROR] Naver 지역 검색 실패: {r.status_code}")
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=5)
+        res.raise_for_status()
+    except requests.RequestException as e:
+        print(f"[ERROR] Naver API 요청 실패 → {type(e).__name__}: {e}")
         return None
 
-    items = r.json().get("items", [])
+    items = res.json().get("items", [])
     if not items:
+        print(f"[MISS] '{query}'에 대한 검색 결과 없음")
         return None
 
-    # blog.naver.com/abcd/place/1234 이런 식의 url에서 1234가 place_id
-    return items[0]["link"]
+    return items[0].get("link")
 
 
 def get_menu_from_naver(place_link: str) -> List[Dict]:
-    """네이버 플레이스 HTML 파싱해서 메뉴 추출"""
+    """
+    네이버 플레이스 HTML 파싱해서 메뉴 추출
+    """
     headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(place_link, headers=headers, timeout=5)
 
-    if r.status_code != 200:
-        raise ValueError(f"[ERROR] 네이버 메뉴 HTML 요청 실패: {r.status_code}")
+    try:
+        res = requests.get(place_link, headers=headers, timeout=5)
+        res.raise_for_status()
+    except requests.RequestException as e:
+        raise ValueError(f"[ERROR] 네이버 HTML 요청 실패: {type(e).__name__}: {e}")
 
-    soup = BeautifulSoup(r.text, "html.parser")
-    menu_elems = soup.select("ul.place_section_content span.Fc1rA")  # 메뉴명
-    price_elems = soup.select("ul.place_section_content span.Yrbzj")  # 가격
+    return _parse_menu_from_html(res.text)
+
+
+def _parse_menu_from_html(html: str) -> List[Dict]:
+    """
+    HTML에서 메뉴명과 가격을 파싱
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 변동 가능한 클래스명 대신 구조적으로 접근
+    menu_names = soup.select("ul.place_section_content span")
+    prices = soup.select("ul.place_section_content span")
+
+    # 필터링 조건: 메뉴명과 가격은 클래스 또는 텍스트 패턴으로 구분 가능
+    name_list = [el.get_text(strip=True) for el in menu_names if el.get("class") and "Fc1rA" in el.get("class")]
+    price_list = [el.get_text(strip=True) for el in prices if el.get("class") and "Yrbzj" in el.get("class")]
 
     menus = []
-    for name, price in zip(menu_elems, price_elems):
+    for name, price in zip(name_list, price_list):
         menus.append({
-            "name": name.get_text(strip=True),
-            "price": price.get_text(strip=True),
+            "name": name,
+            "price": price,
             "img": None
         })
+
+    if not menus:
+        print("[WARN] 메뉴 파싱 결과가 비어 있음")
 
     return menus
