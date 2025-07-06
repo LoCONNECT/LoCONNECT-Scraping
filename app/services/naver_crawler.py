@@ -1,56 +1,55 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+import os
+import requests
 from bs4 import BeautifulSoup
-import time
-from typing import List, Dict
+from typing import List, Dict, Optional
+from dotenv import load_dotenv
 
-# 네이버
+load_dotenv()
 
-def _get_driver() -> webdriver.Chrome:
-    opts = Options()
-    opts.add_argument("--headless=new")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--window-size=1280,1024")
-    service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=opts)
+CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
+CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
 
-def get_menu_from_naver(keyword: str) -> List[Dict]:
-    driver = _get_driver()
-    try:
-        # 검색 페이지 진입
-        driver.get(f"https://map.naver.com/p/search/{keyword}")
-        time.sleep(3)
+def search_naver_place_id(query: str) -> Optional[str]:
+    """네이버 지역 검색 API로 place_id 추출"""
+    headers = {
+        "X-Naver-Client-Id": CLIENT_ID,
+        "X-Naver-Client-Secret": CLIENT_SECRET,
+    }
+    params = {"query": query}
+    url = "https://openapi.naver.com/v1/search/local.json"
 
-        # iframe URL 추출
-        iframe = driver.find_element("css selector", "iframe#entryIframe")
-        iframe_url = iframe.get_attribute("src")
+    r = requests.get(url, headers=headers, params=params, timeout=5)
+    if r.status_code != 200:
+        print(f"[ERROR] Naver 지역 검색 실패: {r.status_code}")
+        return None
 
-        if not iframe_url:
-            print("[ERROR] iframe URL 추출 실패")
-            return []
+    items = r.json().get("items", [])
+    if not items:
+        return None
 
-        # iframe 실제 페이지 이동
-        driver.get(iframe_url)
-        time.sleep(2)
+    # blog.naver.com/abcd/place/1234 이런 식의 url에서 1234가 place_id
+    return items[0]["link"]
 
-        # HTML 파싱
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        menu_items: List[Dict] = []
 
-        for li in soup.select(".place_section_content .E2jtL"):
-            name_tag = li.select_one(".lPzHi")
-            name = name_tag.get_text(strip=True) if name_tag else ""
-            if name:
-                menu_items.append({"name": name})
+def get_menu_from_naver(place_link: str) -> List[Dict]:
+    """네이버 플레이스 HTML 파싱해서 메뉴 추출"""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    r = requests.get(place_link, headers=headers, timeout=5)
 
-        return menu_items
+    if r.status_code != 200:
+        raise ValueError(f"[ERROR] 네이버 메뉴 HTML 요청 실패: {r.status_code}")
 
-    except Exception as e:
-        print(f"[ERROR] 메뉴 크롤링 실패: {e}")
-        return []
+    soup = BeautifulSoup(r.text, "html.parser")
+    menu_elems = soup.select("ul.place_section_content span.Fc1rA")  # 메뉴명
+    price_elems = soup.select("ul.place_section_content span.Yrbzj")  # 가격
 
-    finally:
-        driver.quit()
+    menus = []
+    for name, price in zip(menu_elems, price_elems):
+        menus.append({
+            "name": name.get_text(strip=True),
+            "price": price.get_text(strip=True),
+            "img": None
+        })
+
+    return menus
