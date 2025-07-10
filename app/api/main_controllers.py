@@ -48,7 +48,7 @@ async def list_restaurants(keyword: str = Query(..., description="검색어")):
                 row["menus"] = []
                 print(f"[FATAL] {row['name']} 전체 실패 → {e}")
 
-        save_file(rows, keyword, "restaurants_with_menus.txt")
+        save_file(rows, keyword)
         return rows
 
     except Exception as e:

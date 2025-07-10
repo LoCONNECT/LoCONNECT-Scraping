@@ -1,5 +1,7 @@
 import os
-import logging, requests
+import logging
+import requests
+import json
 from typing import List, Dict
 
 BASE_URL = "https://www.diningcode.com"
@@ -9,10 +11,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-# 다이닝코드 -> 가게 리스트들에는 관대함, 상세 가게 정보는 봇이 차단
 
 def get_restaurants(keyword: str) -> List[Dict]:
-    logging.info("DiningCode 식당 목록 수집 시작")
+    logging.info(f"[START] '{keyword}' 지역 식당 목록 수집")
     page, size = 1, 20
     seen_rids, result = set(), []
     MAX_REPEAT, repeated = 3, 0
@@ -37,7 +38,7 @@ def get_restaurants(keyword: str) -> List[Dict]:
             timeout=10,
         )
         if r.status_code != 200:
-            logging.error(f"API 오류: {r.status_code}")
+            logging.error(f"[ERROR] API 오류: {r.status_code}")
             break
 
         items = (
@@ -67,21 +68,19 @@ def get_restaurants(keyword: str) -> List[Dict]:
                     "name": it.get("nm"),
                     "addr": it.get("addr"),
                     "score": it.get("score"),
+                    "menus": [],  # 나중에 Kakao/Naver에서 채워줄 수 있게 기본 추가
                 }
             )
 
         page += 1
 
-    logging.info(f"총 {len(result)}곳 수집 완료")
+    logging.info(f"[DONE] {keyword} - 총 {len(result)}곳 수집 완료")
     return result
 
-def save_file(rows: List[Dict], keyword: str, fname: str):
-    os.makedirs("txt", exist_ok=True)
-    path = os.path.join("txt", fname)
+
+def save_file(rows: List[Dict], region: str):
+    os.makedirs("data", exist_ok=True)
+    path = os.path.join("data", f"menus-{region}.json")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(f"--- {keyword} ---\n")
-        for r in rows:
-            f.write(f"{r['name']} | {r['addr']} | {r.get('score')} \n")
-            for m in r.get("menus", []):
-                f.write(f"    └ {m['name']} - {m.get('price', '가격 없음')}\n")
-    print(f"[INFO] {path} 저장 완료")
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+    print(f"[SAVE] {path} 저장 완료")
