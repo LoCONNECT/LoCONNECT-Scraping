@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
-
+from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
+import os
 from app.services.diningcode_crawler import get_restaurants, save_file
 from app.services.kakao_crawler import (
     get_kakao_place_id,
@@ -12,6 +12,9 @@ from app.services.naver_crawler import (
     )
 router = APIRouter()
 
+
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
 @router.get("")
 async def list_restaurants(keyword: str = Query(..., description="검색어")):
@@ -53,3 +56,12 @@ async def list_restaurants(keyword: str = Query(..., description="검색어")):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+    
+@router.get("/menus/{region}")
+def get_menu_file(region: str):
+    file_path = os.path.join(DATA_DIR, f"menus-{region}.json")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"menus-{region}.json 파일 없음")
+
+    return FileResponse(file_path, media_type="application/json")
